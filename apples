@@ -1,0 +1,76 @@
+# Step 1: Create Apple Data
+data = [
+    {"title": "Granny Smith", "content": "Granny Smith apples are green and tart. They are great for baking and salads."},
+    {"title": "Fuji Apple", "content": "Fuji apples are sweet and crunchy, popular for snacking."},
+    {"title": "Health Benefits", "content": "Apples are high in fiber and vitamin C. They support heart health, digestion, and weight management."},
+    {"title": "Apple Pie", "content": "Apple pie is a traditional dessert made with cinnamon-spiced apples baked in a crust."},
+    {"title": "Apple History", "content": "Apples have been cultivated for thousands of years. The original wild apples came from Central Asia."},
+    {"title": "Red Delicious", "content": "Red Delicious apples are mildly sweet and commonly used in lunchboxes."},
+    {"title": "Apple Fun Fact", "content": "Did you know the science of growing apples is called pomology?"}
+]
+
+# Step 2: Import Libraries and Set Up Qdrant + Embeddings
+from qdrant_client import models, QdrantClient
+from sentence_transformers import SentenceTransformer
+
+encoder = SentenceTransformer('all-MiniLM-L6-v2')  # Embedding model
+
+qdrant = QdrantClient(":memory:")  # In-memory database
+
+# Step 3: Create Collection for Apples
+qdrant.recreate_collection(
+    collection_name="apples",
+    vectors_config=models.VectorParams(
+        size=encoder.get_sentence_embedding_dimension(),
+        distance=models.Distance.COSINE
+    )
+)
+
+# Step 4: Upload Apple Data to Qdrant
+qdrant.upload_points(
+    collection_name="apples",
+    points=[
+        models.PointStruct(
+            id=idx,
+            vector=encoder.encode(doc["content"]).tolist(),
+            payload=doc,
+        ) for idx, doc in enumerate(data)
+    ]
+)
+
+# Step 5: User Prompt
+user_prompt = "What are the health benefits of apples?"
+
+# Step 6: Search Qdrant for Relevant Info
+hits = qdrant.search(
+    collection_name="apples",
+    query_vector=encoder.encode(user_prompt).tolist(),
+    limit=3
+)
+
+# Print top matches
+for hit in hits:
+    print(hit.payload, "score:", hit.score)
+
+# Step 7: Format results for the LLM
+search_results = [hit.payload for hit in hits]
+
+# Step 8: Connect to Local LLM (Llamafile)
+from openai import OpenAI
+client = OpenAI(
+    base_url="http://127.0.0.1:8080/v1",  # or change to your OpenAI endpoint
+    api_key="sk-no-key-required"
+)
+
+# Step 9: Ask the LLM
+completion = client.chat.completions.create(
+    model="LLaMA_CPP",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant that answers questions based on information about apples."},
+        {"role": "user", "content": user_prompt},
+        {"role": "assistant", "content": str(search_results)}
+    ]
+)
+
+# Step 10: Print the LLM's response
+print(completion.choices[0].message)
